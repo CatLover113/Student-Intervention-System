@@ -1,192 +1,317 @@
-# 🎓 Student Intervention System
+# Urban Sound Classification using Convolutional Neural Networks
 
-> A data-driven machine learning pipeline to identify students at risk of academic failure — enabling early intervention before it's too late.
+> Classifying 10 categories of urban environmental sounds by transforming raw audio into Mel-Spectrograms and training CNN architectures — including a custom-built model and Transfer Learning variants of InceptionV3 — with adversarial robustness evaluation via DeepFool.
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
-- [Motivation](#motivation)
 - [Dataset](#dataset)
 - [Project Structure](#project-structure)
-- [Methodology](#methodology)
-- [Key Findings from EDA](#key-findings-from-eda)
-- [Model Results](#model-results)
-- [Handling Class Imbalance with SMOTE](#handling-class-imbalance-with-smote)
+- [Pipeline Architecture](#pipeline-architecture)
+- [Feature Extraction](#feature-extraction)
+- [Data Preprocessing](#data-preprocessing)
+- [Models](#models)
+- [Training Strategy](#training-strategy)
+- [Results Summary](#results-summary)
+- [Adversarial Robustness — DeepFool](#adversarial-robustness--deepfool)
 - [Conclusions](#conclusions)
 - [Tech Stack](#tech-stack)
-- [References](#references)
+- [References & Resources](#references--resources)
+- [Team](#team)
 
 ---
 
 ## Overview
 
-The **Student Intervention System** is a supervised machine learning project that predicts whether a secondary school student is at risk of failing the academic year. By leveraging a dataset of 395 students from two Portuguese public schools — Gabriel Pereira and Mousinho da Silveira — and analyzing 30 features spanning demographics, family background, lifestyle, and academic history, this project aims to support the development of early intervention systems.
+This project explores **urban sound classification** using deep learning on the **UrbanSound8K** dataset — a benchmark corpus of 8,732 labeled audio clips across 10 environmental sound categories. Raw `.wav` files are converted into **Mel-Spectrogram** images and fed into Convolutional Neural Networks that learn to identify spectral-temporal patterns unique to each sound class.
 
-Out of 395 students, 265 passed (67%) and 130 failed (33%), highlighting a meaningful class imbalance that the project explicitly addresses.
+Four CNN configurations were trained and compared:
 
----
+| Model | Augmentation | Transfer Learning |
+|---|---|---|
+| Custom CNN | ✗ | N/A |
+| Custom CNN | ✓ | N/A |
+| InceptionV3 | ✗ | ✗ (random init) |
+| InceptionV3 | ✓ | ✓ (ImageNet weights) |
 
-## Motivation
-
-Academic failure has cascading long-term consequences — on employment, economic mobility, and mental health. Traditional systems often identify struggling students too late, after failure has already occurred. This project proposes a data-driven alternative: using observable behavioral and socioeconomic signals to flag at-risk students before the end of the academic year, giving schools the opportunity to intervene proactively.
-
-The target class of interest is **failing students** (mapped as the positive class), with False Negatives considered the most critical error — an overlooked at-risk student who receives no support.
+Beyond accuracy, the project evaluates each model's **adversarial robustness** using the DeepFool attack algorithm, providing insight into how stable each model's decision boundaries are under minimal input perturbations.
 
 ---
 
 ## Dataset
 
-- **Source:** [UCI Machine Learning Repository — Student Performance](https://archive.ics.uci.edu/dataset/320/student+performance)
-- **Size:** 395 students, 30 features + 1 binary target (`passed` / `failed`)
-- **Schools:** Gabriel Pereira (349 students) and Mousinho da Silveira (46 students), both public schools in Portugal
-- **Reference article:** [Cortez & Silva, 2008 — Using Data Mining to Predict Secondary School Student Performance](https://repositorium.sdum.uminho.pt/bitstream/1822/8024/1/student.pdf)
+- **Name:** UrbanSound8K
+- **Size:** 8,732 audio clips across 10 folds (fold-based cross-validation)
+- **Download:** [UrbanSound Dataset Website](https://urbansounddataset.weebly.com/download-urbansound8k.html)
+- **Classes (10):**
 
-### Feature Summary
-
-| Category | Features |
+| ID | Class |
 |---|---|
-| Demographics | `sex`, `age`, `address` |
-| Family Background | `famsize`, `Pstatus`, `Medu`, `Fedu`, `Mjob`, `Fjob`, `guardian`, `famrel`, `famsup` |
-| Academic History | `failures`, `schoolsup`, `paid`, `studytime`, `absences` |
-| Lifestyle | `romantic`, `goout`, `freetime`, `Dalc`, `Walc`, `activities` |
-| Aspirations | `higher`, `internet`, `nursery`, `health`, `traveltime`, `reason` |
+| 0 | air_conditioner |
+| 1 | car_horn |
+| 2 | children_playing |
+| 3 | dog_bark |
+| 4 | drilling |
+| 5 | engine_idling |
+| 6 | gun_shot |
+| 7 | jackhammer |
+| 8 | siren |
+| 9 | street_music |
+
+> **Class Imbalance Note:** `car_horn` (429 samples) and `gun_shot` (374 samples) are significantly underrepresented compared to the average of ~873 samples per class. Data augmentation via SpecAugment-style input masking was applied to address this.
 
 ---
 
 ## Project Structure
 
 ```
-Student_Intervention_System/
+Sound_Classification_CNN/
 │
-├── student-data.csv            # Raw dataset
-├── correlation graph.png       # Pre-computed heatmap visualization
-├── Student_Intervention_System.ipynb  # Full analysis notebook
+├── data/
+│   ├── sound_datasets/
+│   │   └── urbansound8k/
+│   │       ├── audio/                  # Raw .wav files organized by fold
+│   │       └── metadata/
+│   │           └── UrbanSound8K.csv
+│   └── processed/
+│       ├── melspecs/                   # Extracted .npy mel spectrograms by fold
+│       │   └── fold{1-10}/
+│       ├── melspec_metadata_fold{N}.csv
+│       └── training_set/
+│           ├── X_train.npy             # Augmented training data
+│           └── y_train.npy
+│
+├── Models/
+│   ├── custom_cnn_no_aug.pth
+│   ├── custom_cnn.pth
+│   ├── inception_v3_noTF_noAug.pth
+│   ├── inception_v3_noTF.pth
+│   └── inception_v3.pth
+│
+├── Projeto_DF_CNN.ipynb               # Full pipeline notebook
 └── README.md
 ```
 
 ---
 
-## Methodology
+## Pipeline Architecture
 
-The project follows a rigorous six-stage analytical pipeline:
-
-### 1. Data Cleaning
-- Verified zero null values across all 395 rows
-- Applied **IQR-based outlier detection** on `absences` (upper fence = 20); edge cases were intentionally preserved to avoid discarding potentially meaningful data points
-- Built a **correlation heatmap** using one-hot encoded features to identify key feature relationships
-
-### 2. Exploratory Data Analysis
-Three analytical lenses were applied:
-
-**Parent background analysis** — family size, parental cohabitation status, mother/father education level (0–4), occupation, and guardian type were compared across passing and failing student groups.
-
-**Factors contributing to passing** — study time, school support, family support, paid tutoring, internet access at home, and aspiration for higher education.
-
-**Factors contributing to failing** — absences, prior class failures, extracurricular activities, romantic involvement, social activity (going out), and alcohol consumption.
-
-### 3. Exploratory Data Analysis Questions
-Targeted sub-group analyses included:
-- Students with two teacher parents
-- Students with low parental education (≤ 9th grade)
-- Students with low study time + high free time + no higher education aspiration (low motivation proxy)
-- Students in romantic relationships with high free time and low study time
-- Effect of receiving paid tutoring vs. actual study investment
-- Impact of combined school and family educational support
-- Alcohol + social life interaction with passing rates
-
-### 4. Data Preprocessing
-- Dropped the `school` feature (treated as irrelevant to generalization)
-- Applied `pd.get_dummies()` to convert all categorical variables into binary columns
-- Mapped target variable: `no → 1` (at-risk), `yes → 0`
-- 80/20 train-test split
-- Applied **StandardScaler** for feature normalization
-
-### 5. Model Training & Evaluation
-Six classifiers were trained and evaluated using: Accuracy, Precision, Recall, F1-Score, ROC AUC, and Confusion Matrix.
-
-### 6. Ensemble Learning & SMOTE
-SMOTE was applied to address class imbalance, followed by a Voting Classifier ensemble combining all models with soft voting. Cross-validation was used for final model selection.
+```
+Raw Audio (.wav)
+      │
+      ▼
+Feature Extraction (Librosa)
+  → Mel-Spectrogram (128 × 173)
+  → Saved as .npy arrays
+      │
+      ▼
+Data Preprocessing
+  → Tiling (pad short clips by looping)
+  → Input Masking Augmentation
+  → Train / Validation / Test split (Folds 1–8 / 10 / 9)
+      │
+      ▼
+Model Training (PyTorch)
+  → Custom CNN  |  InceptionV3 (no TL)  |  InceptionV3 (TL)
+  → Multi-seed training (seeds: 42, 0, 1)
+  → Early Stopping + ReduceLROnPlateau
+      │
+      ▼
+Evaluation
+  → Accuracy, Confusion Matrix, Per-Class Analysis
+  → DeepFool Adversarial Robustness (ρ_adv)
+```
 
 ---
 
-## Key Findings from EDA
+## Feature Extraction
 
-**Parental Education has a measurable impact.** Students whose parents have a university-level education (level 4) showed an overall passing rate above 75%. This is consistent with literature on intergenerational educational transmission, particularly relevant given that the students were born around 1990, when higher education access outside major Portuguese cities was limited.
+Audio files are converted to **Mel-Spectrograms** using [Librosa](https://librosa.org/), a Python library for audio analysis. Mel-Spectrograms represent frequency content over time using a perceptually-motivated frequency scale, making them well-suited as visual input for CNNs.
 
-**Aspiration matters.** Students who expressed a desire for higher education showed significantly higher passing rates. Conversely, ~10% of failing students had no aspiration for further education, suggesting motivational disengagement as a risk factor.
+### Extraction Parameters
 
-**Prior failures are the strongest predictor.** The correlation heatmap and feature analysis consistently point to `failures` as the variable most strongly associated with the outcome — a student who has failed before is substantially more likely to fail again.
+| Parameter | Value | Rationale |
+|---|---|---|
+| `DURATION` | 4 seconds | Majority of clips are 4s; standardizes input length |
+| `SAMPLE_RATE` | 22,050 Hz | Captures frequencies up to ~11 kHz; sufficient for environmental sounds |
+| `N_MELS` | 128 | Standard choice for audio classification; balances resolution and cost |
+| `N_FFT` | 2,048 | Window size ≈ 93ms; ~10.8 Hz/bin at the given sample rate |
+| `HOP_LENGTH` | 512 | ~23ms between frames; standard temporal resolution |
 
-**Social lifestyle indicators compound risk.** Students who frequently went out (levels 4–5), consumed alcohol on both weekdays and weekends, and had high free time were concentrated in the failing group. The correlation between weekday and weekend alcohol consumption and outgoing behavior was noted in the heatmap.
+### Output Shape
 
-**Gender patterns in study behavior.** Female students tended to show higher study time; male students showed higher alcohol consumption — consistent with national trends at the time.
-
-**Guardian type correlates with age.** Students with an "other" guardian (i.e., not mother or father) tend to be older (18+), likely self-guardian, and show a notably lower passing rate.
+Each spectrogram is saved as a **128 × 97** (or tiled to **128 × 173**) NumPy array in decibel scale (`librosa.power_to_db`), normalized relative to the peak energy.
 
 ---
 
-## Model Results
+## Data Preprocessing
 
-All models were evaluated on a held-out test set (20%) with the class of interest being **failing students** (positive class = 1).
+### Handling Variable-Length Clips
 
-### Without SMOTE
+Audio clips shorter than 4 seconds produce spectrograms narrower than the target 173 frames. Three strategies were evaluated:
 
-| Model | Accuracy | Precision | Recall | F1-Score | ROC AUC |
-|---|---|---|---|---|---|
-| Decision Tree | 60.76% | 51.43% | 56.25% | 53.73% | 60.04% |
-| KNN | 68.35% | 50.00% | 36.00% | 41.86% | 59.67% |
-| Logistic Regression | 67.09% | 62.50% | 46.88% | 53.57% | 63.86% |
-| SVM | 59.49% | 50.00% | 3.12% | 5.88% | 50.50% |
-| Neural Network (MLP) | 60.76% | 51.43% | 56.25% | 53.73% | 60.04% |
-| Random Forest | 62.03% | 55.00% | 34.38% | 42.31% | 57.61% |
+| Strategy | Approach | Issue |
+|---|---|---|
+| Zero Padding | Fill remaining frames with silence | Model may associate silence with a class |
+| Stretching | Interpolate to target width | Changes pitch; distorts spectral patterns |
+| **Tiling (chosen)** | **Repeat the spectrogram to fill target width** | **Preserves natural sound patterns; improves robustness** |
 
-### With SMOTE
+Tiling was selected because it avoids both artificial silence and spectral distortion, instead repeating the actual sound signal — consistent with how repeating environmental sounds occur in real environments.
 
-| Model | Accuracy | Precision | Recall | F1-Score | ROC AUC |
-|---|---|---|---|---|---|
-| Decision Tree | 44.30% | 32.35% | 34.38% | 33.33% | 42.72% |
-| KNN | 59.49% | 50.00% | 50.00% | 50.00% | 57.98% |
-| Logistic Regression | 67.09% | 60.71% | 53.12% | 56.67% | 64.86% |
-| **SVM** | **68.35%** | **61.29%** | **59.38%** | **60.32%** | **66.92%** |
-| Neural Network (MLP) | 60.76% | 51.35% | 59.38% | 55.07% | 60.54% |
-| Random Forest | 60.76% | 52.00% | 40.62% | 45.61% | 57.55% |
+### Data Augmentation (SpecAugment-style Input Masking)
 
-### Cross-Validation Scores (5-Fold)
+To address class imbalance and improve generalization, augmentation was applied using frequency and time masking:
 
-| Model | CV Accuracy |
+- **Frequency Masking:** Randomly zeroes out horizontal frequency bands (`freq_mask_param=15`, `n_masks=2`)
+- **Time Masking:** Randomly zeroes out vertical time segments (`time_mask_param=25`, `n_masks=2`)
+
+This forces the model to learn robust frequency-time representations rather than memorizing specific patterns — effectively a form of SpecAugment tailored to Mel-Spectrograms.
+
+### Dataset Split
+
+| Split | Folds | Samples |
+|---|---|---|
+| Training (with aug) | 1–8 | 8,220 |
+| Training (no aug) | 1–8 | 7,079 |
+| Validation | 10 | 837 |
+| Test | 9 | 816 |
+
+---
+
+## Models
+
+### Custom CNN
+
+A purpose-built 4-block convolutional network with two fully-connected layers, designed specifically for Mel-Spectrogram classification.
+
+```
+Input: (1, 128, 173)
+  ↓
+Block 1: Conv2d(1→64) + BN + MaxPool2d + Dropout(0.4)
+Block 2: Conv2d(64→128) + BN + MaxPool2d + Dropout(0.5)
+Block 3: Conv2d(128→256) + BN + MaxPool2d + Dropout(0.5)
+Block 4: Conv2d(256→512) + BN + MaxPool2d + Dropout(0.5)
+  ↓
+Flatten → FC(512) → Dropout → FC(10)
+  ↓
+Output: 10 class logits
+```
+
+### InceptionV3 — No Transfer Learning
+
+Google's Inception architecture (V3) initialized with random weights and retrained from scratch on the UrbanSound8K data. The input layer was modified to accept 1-channel grayscale spectrograms (128×173 → upscaled to 299×299 with 3-channel replication). The output layer was adapted to 10 classes.
+
+### InceptionV3 — Transfer Learning (ImageNet)
+
+The same InceptionV3 architecture loaded with **pre-trained ImageNet weights** (`Inception_V3_Weights.IMAGENET1K_V1`). The input channel was modified for grayscale compatibility, and the final classification head was replaced with a 10-class linear layer. Pre-trained convolutional features serve as a strong initialization point for audio pattern learning via mel-spectrograms.
+
+---
+
+## Training Strategy
+
+All models were trained using a **multi-seed approach** (seeds: 42, 0, 1) to evaluate variance in results and select the most stable checkpoint.
+
+### Regularization Techniques
+
+| Technique | Purpose |
 |---|---|
-| Voting Classifier | 68.10% |
-| Random Forest (no SMOTE) | 67.09% |
-| Random Forest (SMOTE) | 68.86% |
-| SVM (SMOTE) | 68.35% |
+| **L2 Regularization** (`weight_decay=1e-4`) | Penalizes large weights to prevent overfitting |
+| **Batch Normalization** | Normalizes layer outputs (mean=0, std=1) for stable training |
+| **Dropout** (0.4–0.5) | Stochastically disables neurons to improve generalization |
+| **Early Stopping** | Halts training when validation loss stops improving (patience: 20 for CNN, 10 for Inception) |
+| **ReduceLROnPlateau** | Reduces learning rate when validation accuracy plateaus |
 
-### Confusion Matrix Interpretation
+### Hyperparameters
 
-In the context of student risk identification:
-- **True Positive (TP):** Student predicted to fail and actually fails → Correctly flagged for intervention
-- **False Negative (FN):** Student predicted to pass but actually fails → **Overlooked at-risk student** (most critical error)
-- **False Positive (FP):** Student predicted to fail but actually passes → Unnecessary but harmless intervention
-- **True Negative (TN):** Student predicted to pass and actually passes → Correctly identified
+| Parameter | Custom CNN | InceptionV3 |
+|---|---|---|
+| Optimizer | Adam | Adam |
+| Initial LR | 0.001 | 0.001 |
+| Max Epochs | 200 | 100 |
+| Batch Size | 32 | 32 |
+| Loss Function | CrossEntropyLoss | CrossEntropyLoss |
 
 ---
 
-## Handling Class Imbalance with SMOTE
+## Results Summary
 
-The original dataset has a 2:1 pass/fail ratio. Without correction, models were biased toward predicting the majority class, producing high False Negative rates — the most harmful outcome for an intervention system.
+### Model Accuracy Comparison
 
-**SMOTE (Synthetic Minority Over-sampling Technique)** generates synthetic samples of the minority class (failing students) based on nearest-neighbor interpolation in feature space, balancing the training set to 218 samples per class. After applying SMOTE, **SVM with RBF kernel** showed the best balanced performance, particularly improving Recall (59.38%) — reducing the number of at-risk students who are missed.
+| Model | Val Accuracy | Test Accuracy |
+|---|---|---|
+| Custom CNN (no aug) | 80.88% | 76.84% |
+| Custom CNN (with aug) | 77.06% | 78.55% |
+| InceptionV3 (no TL, no aug) | 82.56% | 80.76% |
+| InceptionV3 (no TL, with aug) | 84.35% | 76.59% |
+| InceptionV3 (TL, no aug) | 84.23% | 79.78% |
+| **InceptionV3 (TL, with aug)** | **84.35%** | **81.99%** |
+
+InceptionV3 with Transfer Learning and augmented data achieved the best generalization on the held-out test set. The custom CNN showed competitive performance given its significantly simpler architecture.
+
+### Key Observations
+
+**Data augmentation effects:** For the Custom CNN, augmentation improved test accuracy (+1.71%) at the cost of slightly lower validation accuracy, suggesting better generalization. For InceptionV3 without transfer learning, augmentation improved validation but hurt test performance — indicative of train-validation overfitting.
+
+**Transfer learning advantage:** InceptionV3 initialized with ImageNet weights consistently outperformed its randomly initialized counterpart on the test set, particularly with augmented training data — confirming that visual feature representations learned on natural images transfer well to Mel-Spectrogram classification.
+
+**Common confusion pairs:** The most frequently confused class pairs across models were engine_idling ↔ air_conditioner and drilling ↔ jackhammer — acoustically similar sounds that share continuous, low-frequency harmonic content. Siren and gun_shot were consistently among the most challenging classes.
+
+---
+
+## Adversarial Robustness — DeepFool
+
+The [DeepFool algorithm](https://arxiv.org/abs/1511.04599) (Moosavi-Dezfooli et al., 2016) finds the **minimum perturbation** needed to cross a classifier's decision boundary — effectively measuring how robust the model is to imperceptibly small input changes.
+
+### Metric
+
+$$\rho_{\text{adv}} = \mathbb{E}\left[ \frac{\lVert r \rVert_2}{\lVert x \rVert_2} \right]$$
+
+A **lower ρ_adv** means smaller perturbations suffice to fool the model → **less robust**.
+
+### Implementation
+
+The multi-class DeepFool algorithm (Algorithm 2 from the original paper) was implemented in PyTorch. For each sample, the algorithm:
+1. Computes gradients of the predicted class logit w.r.t. the input
+2. Computes gradients for all other classes
+3. Approximates the nearest decision boundary hyperplane
+4. Accumulates minimal perturbations until the predicted label changes
+
+### Robustness Results
+
+| Model | ρ_adv | Relative Robustness |
+|---|---|---|
+| Custom CNN (no aug) | ~0.0040–0.0050 | Low |
+| Custom CNN (with aug) | ~0.0045–0.0055 | Slightly better |
+| InceptionV3 (no TL) | ~0.0425 | Very low (fragile) |
+| **InceptionV3 (TL)** | **~0.00037** | **Highest robustness** |
+
+**Key insight:** The InceptionV3 with Transfer Learning was by far the most adversarially robust model, with ρ_adv nearly two orders of magnitude lower than the non-transfer version. This suggests that pre-trained weights lead to substantially more stable and well-defined decision boundaries. The InceptionV3 trained from scratch was the most vulnerable — consistent with literature showing that randomly initialized networks form highly irregular decision boundaries.
+
+### Example Adversarial Attacks
+
+DeepFool consistently converged in 1–4 iterations across all models, illustrating how efficiently minimal perturbations can fool even high-accuracy classifiers. Typical misclassification patterns included:
+
+- `siren` → `children_playing`
+- `engine_idling` → `air_conditioner`
+- `jackhammer` → `drilling`
+
+These align with the acoustic similarity patterns observed in standard confusion matrices.
 
 ---
 
 ## Conclusions
 
-The analysis reveals that student academic performance is a multi-factor phenomenon. Social and behavioral indicators (alcohol consumption, going out, romantic involvement) compound underlying socioeconomic factors (parental education, family structure) to either protect or expose students to academic risk.
+This project demonstrates that audio classification via Mel-Spectrograms and CNNs is a viable and effective approach for urban sound recognition. Key takeaways:
 
-From a machine learning standpoint, the dataset's limited size (395 samples) and class imbalance make this a challenging classification task. No single model achieved dominant performance across all metrics. **SVM trained with SMOTE** offered the best overall profile for the system's goal of minimizing missed at-risk students, while **Random Forest with SMOTE** achieved strong cross-validated accuracy.
+**Architecture matters.** The deep, multi-path architecture of InceptionV3 substantially outperforms a custom 4-block CNN on this task, particularly on the more challenging minority classes.
 
-Future improvements could include: larger and more recent datasets, feature engineering on interaction variables, threshold tuning to maximize recall, and time-series data collection for longitudinal tracking.
+**Transfer learning generalizes well to audio.** Despite ImageNet weights being trained on visual images, they provide a strong initialization that meaningfully improves both accuracy and adversarial robustness for mel-spectrogram-based classification.
+
+**Augmentation trades off differently across architectures.** For simpler models, augmentation reliably improves test generalization. For complex models, augmentation effects are more nuanced — improving validation but potentially introducing overfitting on the augmented distribution.
+
+**Adversarial robustness is not free.** High accuracy does not imply high robustness. The Custom CNN and InceptionV3 without transfer learning remain highly susceptible to DeepFool-style attacks, underscoring the importance of evaluating models beyond standard accuracy metrics when deploying in sensitive environments.
 
 ---
 
@@ -194,24 +319,40 @@ Future improvements could include: larger and more recent datasets, feature engi
 
 | Tool | Purpose |
 |---|---|
-| Python 3.11 | Primary language |
-| pandas | Data manipulation |
-| NumPy | Numerical operations |
-| scikit-learn | ML models, preprocessing, evaluation |
-| imbalanced-learn | SMOTE implementation |
-| matplotlib / seaborn | Data visualization |
-| Jupyter Notebook | Interactive development environment |
+| Python 3.x | Primary language |
+| PyTorch | Deep learning framework |
+| torchvision | InceptionV3 architecture and pre-trained weights |
+| Librosa | Audio loading and Mel-Spectrogram extraction |
+| NumPy | Numerical operations and array storage |
+| pandas | Metadata management |
+| scikit-learn | Label encoding, evaluation utilities |
+| matplotlib / seaborn | Visualization |
+| tqdm | Progress tracking |
+| torchinfo | Model summary |
+| soundata | Dataset download utility |
+| SciPy | Spectrogram stretching (zoom interpolation) |
+| Jupyter Notebook | Interactive development |
 
 ---
 
-## References
+## References & Resources
 
-[1] Cordeiro, A. M. R., & Alcoforado, L. (2018). *Education and Development: Contributions to the Changes of Democratic Portugal*. OpenEdition Journals.
+- [Librosa Documentation](https://librosa.org/doc/0.11.0/index.html)
+- [PyTorch Documentation](https://docs.pytorch.org/docs/stable/index.html)
+- [PyTorch InceptionV3](https://docs.pytorch.org/vision/main/models/inception.html)
+- [UrbanSound8K Dataset](https://urbansounddataset.weebly.com/download-urbansound8k.html)
+- Moosavi-Dezfooli, S., Fawzi, A., & Frossard, P. (2016). *DeepFool: A Simple and Accurate Method to Fool Deep Neural Networks*. CVPR 2016.
+- Park, D. S., et al. (2019). *SpecAugment: A Simple Data Augmentation Method for Automatic Speech Recognition*. Interspeech 2019.
+- Szegedy, C., et al. (2016). *Rethinking the Inception Architecture for Computer Vision*. CVPR 2016.
 
-[2] Dubow, E. F., Boxer, P., & Huesmann, L. R. (2009). Long-term Effects of Parents' Education on Children's Educational and Occupational Success. *Merrill-Palmer Quarterly*, 55(3), 224–249.
+---
 
-[3] Gandhi, A., Kumar, A., Konkimalla, A., & Desai, S. (2021). *Deeper Look into Academic Performance of Portuguese Students*. Carnegie Mellon University.
+## Team
 
-[4] Wang, Y. (2024). Impact of Love and Romantic Relationships on Adolescent Psychology and Their School Performance. *Proceedings of the 3rd International Conference on Interdisciplinary Humanities and Communication Studies*.
+| Name | Role |
+|---|---|
+| Hugo Duarte de Sousa | ML Pipeline, CNN Architecture,  CNN Training Infrastructure, CNN Data Preprocessing, CNN Model Evaluation |
+| Mariana de Sousa Serralheiro |  DeepFool Implementation and Analysis|
+| Tiago Lemos Silva | RNN Feature Extraction, RNN Training Infrastructure, RNN Training Infrastructure, RNN Data Preprocessing, RNN Model Evaluation |
 
-[5] Cortez, P., & Silva, A. (2008). *Using Data Mining to Predict Secondary School Student Performance*. University of Minho.
+**Course:** Machine Learning II — CC3043 PL1
